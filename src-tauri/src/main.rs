@@ -3,16 +3,15 @@
 
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
-use base64::{Engine, engine::general_purpose::STANDARD, write::EncoderWriter};
-use base64::prelude::BASE64_STANDARD;
+use std::sync::Mutex;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use tauri::Manager;
 use tokio::time::{sleep, Duration};
 use lazy_static::lazy_static;
 use windows_sys::Win32::System::Threading::{INFINITE, PROCESS_SYNCHRONIZE};
 
 
-const DEFAULT_LOL_PATH: &'static str = "C:\\Riot Games\\League of Legends";
+const DEFAULT_LOL_PATH: &str = "C:\\Riot Games\\League of Legends";
 
 #[derive(Debug)]
 struct Connection {
@@ -22,9 +21,10 @@ struct Connection {
 }
 type AppState = Mutex<Option<Connection>>;
 
-enum BabySitterEvent {
-    LoLDead,
-    LoLAlive,
+#[derive(Clone, serde::Serialize)]
+enum LoLClientState {
+    Offline,
+    Online,
 }
 
 lazy_static!{
@@ -32,18 +32,11 @@ lazy_static!{
 }
 
 #[tauri::command]
-fn login_lol(state: tauri::State<'_, AppState>, path: &str) -> Result<(), ()> {
-    todo!()
-}
-
-#[tauri::command]
-fn current_runes() -> String {
-    todo!()
-}
-
-#[tauri::command]
-fn get_auth() -> String {
-    format!("{:?}", APP_STATE.lock().unwrap())
+fn client_state() -> LoLClientState {
+    match *APP_STATE.lock().unwrap() {
+        Some(_) => LoLClientState::Online,
+        None => LoLClientState::Offline,
+    }
 }
 
 
@@ -64,7 +57,6 @@ fn main() {
                     while !Path::new(&lock_path).exists() {
                         sleep(Duration::from_millis(1_000)).await;
                     }
-                    println!("File exists");
                     let process_id = if let Ok(line) = fs::read_to_string(&lock_path)  {
                         let mut words = line.split(':').skip(1);
                         let process_id = words.next().unwrap().parse().unwrap();
@@ -76,21 +68,20 @@ fn main() {
                     } else {
                         continue 'file_doesnt_exist;
                     };
-                    app_handle.emit_all("Online", ());
+                    app_handle.emit_all("LoLClientEvent", LoLClientState::Online);
                     unsafe {
                         let handle = windows_sys::Win32::System::Threading::OpenProcess(PROCESS_SYNCHRONIZE, 0, process_id);
                         let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(handle, INFINITE);
-                        println!("{:?}", wait_result);
                     };
                     *APP_STATE.lock().unwrap() = None;
-                    app_handle.emit_all("Offline", ());
+                    app_handle.emit_all("LoLClientEvent", LoLClientState::Offline);
 
                 }
             });
             Ok(())
         })
 
-        .invoke_handler(tauri::generate_handler![login_lol, current_runes, get_auth])
+        .invoke_handler(tauri::generate_handler![client_state])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
